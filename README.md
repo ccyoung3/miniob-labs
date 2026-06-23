@@ -1,97 +1,52 @@
-# MiniOB 介绍
+# 《当代数据管理》大作业 - 基于 MiniOB 的数据库内核演进实现
 
-<div align="left">
+## 📖 项目简介
+本项目为**《当代数据管理》**课程的期末大作业代码仓库。
+作为一个研一学生，为了深入理解现代数据库的底层机制，我选取了开源教学数据库引擎 **MiniOB** 作为基础骨架，并通过一系列高难度的核心组件迭代，亲手去探索并实现一个数据库从存储引擎、查询执行到事务控制的完整生命周期。
 
-[![Chinese Doc](https://img.shields.io/badge/文档-简体中文-blue)](https://oceanbase.github.io/miniob/)
-[![MiniOB stars](https://img.shields.io/badge/dynamic/json?color=blue&label=stars&query=stargazers_count&url=https%3A%2F%2Fapi.github.com%2Frepos%2Foceanbase%2Fminiob)](https://github.com/oceanbase/miniob)
-[![Coverage Status](https://codecov.io/gh/oceanbase/miniob/branch/main/graph/badge.svg)](https://codecov.io/gh/oceanbase/miniob)
-[![HelloGitHub](https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=62efc8a5bbb64a9fbb1ebb7703446f36&claim_uid=AptH8D2YM3rCGL9&theme=small)](https://hellogithub.com/repository/62efc8a5bbb64a9fbb1ebb7703446f36)
+本项目的核心目标**不仅是让系统“跑起来”，更是为了在踩坑的过程中摸索各种数据库架构（如 LSM-Tree）中的设计哲学，尤其在并发控制、读写放大平衡、内存管理上的取舍。**
 
-</div>
+## 🎯 演进路线与已实现模块
+整个大作业通过分阶段的实验（Labs）来逐步完善底层能力，各模块的实现笔记和深度思考可以参考 `docs/blog/` 目录下的相关文档。
 
-MiniOB 是 [OceanBase](https://github.com/oceanbase/oceanbase) 团队基于华中科技大学数据库课程原型，联合多所高校重新开发的、专为零基础的同学设计的数据库入门学习项目。MiniOB 的目标是为在校学生、数据库从业者、爱好者或对基础技术感兴趣的人提供一个友好的数据库学习项目，更好地将理论、实践进行结合，提升同学们的工程实战能力。
+### Lab 0: C++ 基础与无锁并发初步 (已完成)
+- 实现了支持并发访问的 `ObBloomfilter` (布隆过滤器)。
+- **技术亮点**: 不借助任何读写锁，单纯依靠 `std::atomic` 和 CAS 操作实现无锁并发写入与查询。
 
-MiniOB 整体代码简洁，容易上手，设计了一系列由浅入深的题目，帮助同学们从零基础入门，迅速了解数据库并深入学习数据库内核。MiniOB 简化了许多模块，例如不考虑并发操作、安全特性和复杂的事务管理等功能，以便更好地学习数据库实现原理。我们期望通过 MiniOB 的训练，同学们能够熟练掌握数据库内核模块的功能和协同关系，并具备一定的工程编码能力，例如内存管理、网络通信和磁盘 I/O 处理等, 这将有助于同学在未来的面试和工作中脱颖而出。
+### Lab 1: LSM-Tree 存储引擎 (进行中)
+这是整个大作业中最具挑战也是最核心的基础存储部分。主要包含了以下特性：
+- **无锁跳表 (Concurrent SkipList)**: 用于内存中的 MemTable 快速增删改查。
+- **SSTable 与 LRU Cache**: 实现了数据文件块的解析及带驱逐机制的缓存控制，大幅降低磁盘 I/O 带来的延迟。
+- **Leveled Compaction**: 控制读写放大，设计并实现将 L0 与更深层数据有效合并的挑选策略。
 
-# [文档](https://oceanbase.github.io/miniob/)
-代码配套设计文档和相关代码注释已经生成文档，并通过 GitHub Pages 发布。您可以直接访问：[MiniOB GitHub Pages](https://oceanbase.github.io/miniob/).
+### Lab 2 ~ Lab 4 (规划中)
+- **查询引擎**: 扩展词法与语法分析，建立优化器与物理执行计划。
+- **事务引擎 (MVCC/WAL)**: 控制 ACID 与故障恢复。
+- **性能基准测试**: 构建吞吐与延迟压测体系。
 
-## 快速上手
+## ⚙️ 如何编译与运行
 
-为了帮助开发者更好地上手并学习 MiniOB，建议阅读以下内容：
+本项目使用 CMake 构建，依赖标准 C++14/17 编译器。
 
-1. [MiniOB 框架介绍](https://oceanbase.github.io/miniob/design/miniob-architecture/)
-2. [如何编译 MiniOB 源码](https://oceanbase.github.io/miniob/how_to_build/)
-3. [如何运行 MiniOB](https://oceanbase.github.io/miniob/how_to_run/)
-4. [使用 GitPod 开发 MiniOB](https://oceanbase.github.io/miniob/dev-env/dev_by_gitpod/)
-5. [doxygen 代码文档](https://oceanbase.github.io/miniob/design/doxy/html/index.html)
+```bash
+# 克隆代码
+git clone https://github.com/ccyoung3/miniob-labs.git
+cd miniob-labs
 
-为了帮助大家更好地学习数据库基础知识，OceanBase社区提供了一系列教程。更多文档请参考 [MiniOB GitHub Pages](https://oceanbase.github.io/miniob/)。建议学习：
+# 编译（默认 debug 模式）
+bash build.sh debug --make -j4
 
-1. [《从0到1数据库内核实战教程》  视频教程](https://open.oceanbase.com/activities/4921877?id=4921946)
-2. [《从0到1数据库内核实战教程》  基础讲义](https://github.com/oceanbase/kernel-quickstart)
-3. [《数据库管理系统实现》  华中科技大学实现教材](https://oceanbase.github.io/miniob/lectures/index.html)
+# 运行服务端
+./build_debug/bin/observer -f etc/observer.ini
 
-## 系统架构
+# 在另一个终端运行客户端进行连接
+./build_debug/bin/obclient
+```
 
-MiniOB 整体架构如下图所示:
+## 📝 个人思考与心得
+在做这个大作业的过程中，我遇到了非常多关于并发边界条件与死锁的难题。对于每一个重要模块，我都单独写了思考总结，详见：
+- [Lab1 实验心得与踩坑笔记](./docs/blog/lab1-thoughts.md)（持续更新中...）
 
-<img src="./docs/docs/design/images/miniob-architecture.svg" width = "60%" alt="InternalNode" align=center />
-
-其中:
-
-- 网络模块(NET Service)：负责与客户端交互，收发客户端请求与应答；
-- SQL解析(Parser)：将用户输入的SQL语句解析成语法树；
-- 语义解析模块(Resolver)：将生成的语法树，转换成数据库内部数据结构；
-- 查询优化(Optimizer)：根据一定规则和统计数据，调整/重写语法树。(部分实现)；
-- 计划执行(Executor)：根据语法树描述，执行并生成结果；
-- 存储引擎(Storage Engine)：负责数据的存储和检索；
-- 事务管理(MVCC)：管理事务的提交、回滚、隔离级别等。当前事务管理仅实现了MVCC模式，因此直接以MVCC展示；
-- 日志管理(Redo Log)：负责记录数据库操作日志；
-- 记录管理(Record Manager)：负责管理某个表数据文件中的记录存放；
-- B+ Tree：表索引存储结构；
-- 会话管理：管理用户连接、调整某个连接的参数；
-- 元数据管理(Meta Data)：记录当前的数据库、表、字段和索引元数据信息；
-- 客户端(Client)：作为测试工具，接收用户请求，向服务端发起请求。
-
-
-# [OceanBase 大赛](https://open.oceanbase.com/competition)
-
-全国大学生计算机系统能力大赛（以下简称“大赛”）是由系统能力培养研究专家组发起，全国高等学校计算机教育研究会、系统能力培养研究项目示范高校共同主办、OceanBase 承办，面向高校大学生的全国性数据库大赛。
-大赛面向全国爱好数据库的高校学生，以“竞技、交流、成长”为宗旨，搭建基于赛事的技术交流平台，促进高校创新人才培养机制，不仅帮助学生从0开始系统化学习 OceanBase 数据库理论知识，提升学生数据库实践能力，更能帮助学生走向企业积累经验，促进国内数据库人才的发展，碰撞出创新的火花。
-
-OceanBase 初赛基于一套适合初学者实践的数据库实训平台 MiniOB，代码量少，易于上手学习，包含了数据库的各个关键模块，是一个系统性的数据库学习平台。基于该平台设置了一系列由浅入深的题目，以帮助同学们更好"零"基础入门。
-
-为了帮助大家能在大赛中取得好成绩，我们提供了一系列的教程和指导，帮助大家更好地学习数据库基础知识，更好地完成大赛题目。
-欢迎大家查看[《从0到1数据库内核实战教程》  视频教程](https://open.oceanbase.com/course/427)，视频中包含了代码框架的介绍和一些入门题目的讲解。
-> 由于MiniOB是一个持续演进的产品，视频教程中有些内容会与最新代码有冲突，建议大家参考讲解中的思路。
-
-大赛的初赛是在MiniOB上进行的，同学们可以在前几届的题目上进行提前训练，可以让自己比别人提前一步。大家在日常训练时可以在[MiniOB 训练营](https://open.oceanbase.com/train) 上提交代码进行测试。
-
-在提交前, 请参考并学习 [训练营使用说明](https://oceanbase.github.io/miniob/dev-env/how_to_submit_for_testing/)。
-
-如果大家在大赛中或使用训练营时遇到一些问题，请先查看[大赛 FAQ](https://ask.oceanbase.com/t/topic/35601465)。
-
-# 在线开发平台
-
-搭建开发环境是一个比较耗时而且繁琐的事情，特别是对于初学者。为了让大家更快地上手 MiniOB，我们为大家提供了一个[开源学堂在线编程环境](./docs/docs/dev-env/cloudlab_setup.md)，推荐大家使用开源学堂在线编程环境进行实验，在线编程环境已经提供了可以直接用于 MiniOB 编程的环境，便于大家快速开始。对于希望在本地准备开发环境的同学，[这篇文档](./docs/docs/dev-env/introduction.md) 中已经介绍的十分详细，请先认真阅读。如果仍有疑问，欢迎提问，也非常欢迎刚刚入门的同学分享自己准备开发环境的经验。
-
-# Contributing
-
-OceanBase 社区热情欢迎每一位对数据库技术热爱的开发者，期待与您携手开启思维碰撞之旅。无论是文档格式调整或文字修正、问题修复还是增加新功能，都是参与和贡献 OceanBase 社区的方式之一。MiniOB 现在开放了一些[新功能的开发](https://github.com/oceanbase/miniob/issues?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22)，欢迎有兴趣的同学一起共建，希望我们共同成长。如果你对MiniOB不熟悉也没关系，可以直接联系我们，我们将会有人指导上手。现在就开始您的首次贡献吧！更多详情，请参考 [社区贡献](CONTRIBUTING.md)。
-
-# Contributors
-感谢所有为 MiniOB 项目做出贡献的同学们！
-
-<a href="https://github.com/oceanbase/miniob/graphs/contributors"><img src="https://contributors-img.web.app/image?repo=oceanbase/miniob&width=890" /></a>
-
-# License
-
-MiniOB 采用 [木兰宽松许可证，第2版](https://license.coscl.org.cn/MulanPSL2), 可以自由拷贝和使用源码, 当做修改或分发时, 请遵守 [木兰宽松许可证，第2版](https://license.coscl.org.cn/MulanPSL2). 
-
-# 社区组织
-
-- [OceanBase 社区交流群 33254054](https://h5.dingtalk.com/circle/healthCheckin.html?corpId=dingd88359ef5e4c49ef87cda005313eea7a&1fe0ca69-72d=16c86a07-83c&cbdbhh=qwertyuiop&origin=1)
-- [OceanBase 大赛官方交流群 35326455](https://qr.dingtalk.com/action/joingroup?code=v1,k1,g61jI0RwHQA8UMocuTbys2cyM7vck2c6jNE87vdxz9o=&_dt_no_comment=1&origin=11)
-- [OceanBase 官方论坛](https://ask.oceanbase.com/)
-- MiniOB 开发者微信群(添加 OBCE888 为好友，备注 MiniOB SIG，邀请入群)
+> **作者**: ccyoung3
+> **身份**: 研一在读
+> **声明**: 本仓库仅作为《当代数据管理》的个人学习作业记录。

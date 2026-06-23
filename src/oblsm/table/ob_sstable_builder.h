@@ -46,6 +46,12 @@ public:
    *
    */
   RC                    build(shared_ptr<ObMemTable> mem_table, const string &file_name, uint32_t sst_id);
+
+  RC                    start(const string &file_name, uint32_t sst_id);
+  RC                    add(const string_view &key, const string_view &value);
+  RC                    finish();
+
+  size_t                appro_size() const { return curr_offset_ + block_builder_.appro_size(); }
   size_t                file_size() const { return file_size_; }
   shared_ptr<ObSSTable> get_built_table();
   void                  reset();

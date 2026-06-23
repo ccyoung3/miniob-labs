@@ -15,27 +15,45 @@ namespace oceanbase {
 
 RC ObSSTableBuilder::build(shared_ptr<ObMemTable> mem_table, const std::string &file_name, uint32_t sst_id)
 {
-  reset();
-  sst_id_ = sst_id;
-  file_writer_ = make_unique<ObFileWriter>(file_name);
-  if (file_writer_->open_file() != RC::SUCCESS) return RC::IOERR_OPEN;
+  RC rc = start(file_name, sst_id);
+  if (rc != RC::SUCCESS) return rc;
 
   ObLsmIterator* it = mem_table->new_iterator();
   it->seek_to_first();
   while (it->valid()) {
-    if (block_builder_.appro_size() == 0) {
-      curr_blk_first_key_ = string(it->key().data(), it->key().size());
-    }
-    RC rc = block_builder_.add(it->key(), it->value());
-    if (rc == RC::FULL) {
-      finish_build_block();
-      curr_blk_first_key_ = string(it->key().data(), it->key().size());
-      block_builder_.add(it->key(), it->value());
-    }
+    add(it->key(), it->value());
     it->next();
   }
   delete it;
   
+  return finish();
+}
+
+RC ObSSTableBuilder::start(const std::string &file_name, uint32_t sst_id)
+{
+  reset();
+  sst_id_ = sst_id;
+  file_writer_ = make_unique<ObFileWriter>(file_name);
+  if (file_writer_->open_file() != RC::SUCCESS) return RC::IOERR_OPEN;
+  return RC::SUCCESS;
+}
+
+RC ObSSTableBuilder::add(const string_view &key, const string_view &value)
+{
+  if (block_builder_.appro_size() == 0) {
+    curr_blk_first_key_ = string(key.data(), key.size());
+  }
+  RC rc = block_builder_.add(key, value);
+  if (rc == RC::FULL) {
+    finish_build_block();
+    curr_blk_first_key_ = string(key.data(), key.size());
+    block_builder_.add(key, value);
+  }
+  return RC::SUCCESS;
+}
+
+RC ObSSTableBuilder::finish()
+{
   if (block_builder_.appro_size() > 0) {
     finish_build_block();
   }

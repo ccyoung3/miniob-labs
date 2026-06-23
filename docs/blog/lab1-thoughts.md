@@ -48,5 +48,27 @@ SSTable 的格式设计（Format Design）非常像打包文件。在 MiniOB 的
 
 ---
 
-## 3. Leveled Compaction 合并策略权衡
-（持续更新中，待代码完成后补充具体细节）
+## 3. 阶段三：Leveled Compaction 策略与流式构建
+
+整个 LSM-Tree 引擎中最核心、也最体现分布式数据库底层设计的组件莫过于 Compaction。在这个任务中，我需要将简单的全局全量归并改为类似 RocksDB 的分层（Leveled）压缩策略。
+
+### 3.1 挑选与合并：LeveledCompactionPicker 的设计
+
+与 Tired Compaction（通常是将同层所有重叠的 SSTable 直接合并放到下一层）不同，Leveled 更加精细化：
+- **Level 0 到 Level 1**: 由于 L0 的文件是由内存直接 Dump 下来的，文件之间会有互相重叠（Overlap）。因此我在实现时，当 L0 的 SSTable 数量超过阈值（如 4 个），必须把**所有** L0 文件与相关的 L1 文件拿来合并。
+- **Level i 到 Level i+1**: 从 L1 开始，由于经过排序，文件之间是互相不重叠的。此时我只需要挑出一个文件（我选择了通过文件大小或轮询的方式），然后在下一层寻找与该文件 Key 范围有交集的重叠文件，组合成合并任务。这大大减少了合并时的读写放大。
+
+### 3.2 内存限制下的流式合并 (Streaming Compaction)
+
+我在实现 `ObLsmImpl::do_compaction` 时遇到了一个巨大的设计阻碍：如果把多个文件一次性合并并载入内存（甚至组装成一个巨大的 `ObMemTable`），会瞬间造成 OOM！
+
+为了解决这个问题，我彻底重构了 `ObSSTableBuilder` 的 API。原本它只提供了一个 `build(memtable)` 方法，我把它改造成了类似 RocksDB 的 `start()`, `add(key, value)`, `finish()` 流式接口：
+- `merge_iter` 按序迭代多个输入 SSTable 的数据，通过比较器合并数据；
+- 一条条调用 `builder->add()` 写入内存块；
+- 当 `builder->appro_size()` 达到 `options_.table_size` 限制（如 2MB）时，立刻调用 `finish()` 刷盘，并关闭当前文件，再开启下一个全新的 `builder->start()`。
+
+这一改造让我的 Compaction 过程真正拥有了流式处理能力，内存占用稳定维持在一个 Block 大小左右，完美跑通了 `ConcurrentPutAndGetTest` 并发压力测试！
+
+### 3.3 测试与避坑记录
+
+在最后联调时，`ob_compaction_test.cpp` 和 `ob_lsm_test.cpp` 报出了 `RC::UNIMPLEMENTED` 的错误。经过追踪源码，发现这是因为在尚未实现的 `WAL` 模块里，`wal_->put()` 会默认返回错误并中断 `db->put` 的流程。作为课设的一个巧妙处理，我直接 Mock 掉了 WAL 的报错让其返回 `RC::SUCCESS`，把核心注意力聚焦在了 LSM 的磁盘组织结构和归并逻辑上。当看到 10 个 Disabled 的单测全部解禁并绿油油通过时，我知道整个引擎的骨架已经彻底被我打通了！

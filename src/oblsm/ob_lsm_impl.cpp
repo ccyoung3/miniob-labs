@@ -258,7 +258,36 @@ void ObLsmImpl::try_major_compaction()
       }
     }
   } else if (options_.type == CompactionType::LEVELED) {
-    // TODO: apply the compaction results to sstable
+    *new_sstables = *sstables_;
+    int level = picked->level();
+    const auto &inputs0 = picked->inputs(0);
+    const auto &inputs1 = picked->inputs(1);
+    
+    auto &L0 = new_sstables->at(level);
+    L0.erase(std::remove_if(L0.begin(), L0.end(), [&](const shared_ptr<ObSSTable>& sst) {
+      return find_sstable(inputs0, sst);
+    }), L0.end());
+
+    auto &L1 = new_sstables->at(level + 1);
+    L1.erase(std::remove_if(L1.begin(), L1.end(), [&](const shared_ptr<ObSSTable>& sst) {
+      return find_sstable(inputs1, sst);
+    }), L1.end());
+
+    L1.insert(L1.end(), results.begin(), results.end());
+    std::sort(L1.begin(), L1.end(), [&](const shared_ptr<ObSSTable>& a, const shared_ptr<ObSSTable>& b) {
+      return internal_key_comparator_.compare(a->first_key(), b->first_key()) < 0;
+    });
+
+    mf_record.compaction_type = options_.type;
+    for (const auto& sst : inputs0) {
+      mf_record.deleted_tables.emplace_back(sst->sst_id(), level);
+    }
+    for (const auto& sst : inputs1) {
+      mf_record.deleted_tables.emplace_back(sst->sst_id(), level + 1);
+    }
+    for (const auto& sst : results) {
+      mf_record.added_tables.emplace_back(sst->sst_id(), level + 1);
+    }
   }
 
   sstables_ = new_sstables;
@@ -275,7 +304,51 @@ void ObLsmImpl::try_major_compaction()
   try_major_compaction();
 }
 
-vector<shared_ptr<ObSSTable>> ObLsmImpl::do_compaction(ObCompaction *picked) { return {}; }
+vector<shared_ptr<ObSSTable>> ObLsmImpl::do_compaction(ObCompaction *picked) {
+  vector<shared_ptr<ObSSTable>> results;
+  vector<unique_ptr<ObLsmIterator>> iters;
+
+  for (int i = 0; i < 2; ++i) {
+    for (const auto& sst : picked->inputs(i)) {
+      iters.emplace_back(sst->new_iterator());
+    }
+  }
+
+  unique_ptr<ObLsmIterator> merge_iter(new_merging_iterator(&internal_key_comparator_, std::move(iters)));
+  merge_iter->seek_to_first();
+
+  unique_ptr<ObSSTableBuilder> builder = nullptr;
+  string last_user_key = "";
+
+  while (merge_iter->valid()) {
+    string cur_user_key = string(extract_user_key(merge_iter->key()));
+    if (cur_user_key != last_user_key || last_user_key == "") {
+      last_user_key = cur_user_key;
+
+      if (!builder) {
+        builder = make_unique<ObSSTableBuilder>(&default_comparator_, block_cache_.get());
+        uint64_t sstable_id = sstable_id_.fetch_add(1);
+        builder->start(get_sstable_path(sstable_id), sstable_id);
+      }
+
+      builder->add(merge_iter->key(), merge_iter->value());
+
+      if (builder->appro_size() >= options_.table_size) {
+        builder->finish();
+        results.push_back(builder->get_built_table());
+        builder = nullptr;
+      }
+    }
+    merge_iter->next();
+  }
+
+  if (builder && builder->appro_size() > 0) {
+    builder->finish();
+    results.push_back(builder->get_built_table());
+  }
+
+  return results;
+}
 
 void ObLsmImpl::build_sstable(shared_ptr<ObMemTable> imem)
 {

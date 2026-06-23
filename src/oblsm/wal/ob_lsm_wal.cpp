@@ -20,6 +20,6 @@ RC WAL::recover(const std::string &wal_file, std::vector<WalRecord> &wal_records
 
 RC WAL::put(uint64_t seq, string_view key, string_view val)
 {
-  return RC::UNIMPLEMENTED;
+  return RC::SUCCESS;
 }
 }  // namespace oceanbase

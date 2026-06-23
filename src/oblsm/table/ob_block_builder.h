@@ -32,7 +32,7 @@ public:
 
   string last_key() const;
 
-  uint32_t appro_size() { return data_.size() + offsets_.size() * sizeof(uint32_t); }
+  uint32_t appro_size() const { return data_.size() + offsets_.size() * sizeof(uint32_t); }
 
 private:
   static const uint32_t BLOCK_SIZE = 4 * 1024;  // 4KB

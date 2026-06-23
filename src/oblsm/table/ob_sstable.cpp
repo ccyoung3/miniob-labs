@@ -16,19 +16,60 @@ namespace oceanbase {
 
 void ObSSTable::init()
 {
-  // your code here
+  file_reader_ = make_unique<ObFileReader>(file_name_);
+  if (file_reader_->open_file() != RC::SUCCESS) return;
+  uint32_t file_size = file_reader_->file_size();
+  if (file_size < sizeof(uint32_t)) return;
+
+  string trailer_str = file_reader_->read_pos(file_size - sizeof(uint32_t), sizeof(uint32_t));
+  uint32_t meta_offset = get_numeric<uint32_t>(trailer_str.data());
+
+  if (meta_offset >= file_size) return;
+
+  string metas_data = file_reader_->read_pos(meta_offset, file_size - meta_offset - sizeof(uint32_t));
+  
+  const char *ptr = metas_data.data();
+  uint32_t num_metas = get_numeric<uint32_t>(ptr);
+  ptr += sizeof(uint32_t);
+
+  for (uint32_t i = 0; i < num_metas; ++i) {
+    uint32_t meta_size = get_numeric<uint32_t>(ptr);
+    ptr += sizeof(uint32_t);
+    string meta_str(ptr, meta_size);
+    ptr += meta_size;
+    BlockMeta meta;
+    meta.decode(meta_str);
+    block_metas_.push_back(meta);
+  }
 }
 
 shared_ptr<ObBlock> ObSSTable::read_block_with_cache(uint32_t block_idx) const
 {
-  // your code here
-  return nullptr;
+  if (block_cache_ == nullptr) {
+    return read_block(block_idx);
+  }
+  uint64_t cache_key = ((uint64_t)sst_id_ << 32) | block_idx;
+  shared_ptr<ObBlock> block;
+  if (block_cache_->get(cache_key, block)) {
+    return block;
+  }
+  block = read_block(block_idx);
+  if (block != nullptr) {
+    block_cache_->put(cache_key, block);
+  }
+  return block;
 }
 
 shared_ptr<ObBlock> ObSSTable::read_block(uint32_t block_idx) const
 {
-  // your code here
-  return nullptr;
+  if (block_idx >= block_metas_.size()) {
+    return nullptr;
+  }
+  const BlockMeta &meta = block_metas_[block_idx];
+  string block_data = file_reader_->read_pos(meta.offset_, meta.size_);
+  auto block = make_shared<ObBlock>(comparator_);
+  block->decode(block_data);
+  return block;
 }
 
 void ObSSTable::remove() { filesystem::remove(file_name_); }

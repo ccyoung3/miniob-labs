@@ -13,10 +13,51 @@ See the Mulan PSL v2 for more details. */
 
 namespace oceanbase {
 
-// TODO: refactor build with mem_table/iterator logic.
 RC ObSSTableBuilder::build(shared_ptr<ObMemTable> mem_table, const std::string &file_name, uint32_t sst_id)
 {
-  return RC::UNIMPLEMENTED;
+  reset();
+  sst_id_ = sst_id;
+  file_writer_ = make_unique<ObFileWriter>(file_name);
+  if (file_writer_->open_file() != RC::SUCCESS) return RC::IOERR_OPEN;
+
+  ObLsmIterator* it = mem_table->new_iterator();
+  it->seek_to_first();
+  while (it->valid()) {
+    if (block_builder_.appro_size() == 0) {
+      curr_blk_first_key_ = string(it->key().data(), it->key().size());
+    }
+    RC rc = block_builder_.add(it->key(), it->value());
+    if (rc == RC::FULL) {
+      finish_build_block();
+      curr_blk_first_key_ = string(it->key().data(), it->key().size());
+      block_builder_.add(it->key(), it->value());
+    }
+    it->next();
+  }
+  delete it;
+  
+  if (block_builder_.appro_size() > 0) {
+    finish_build_block();
+  }
+
+  uint32_t meta_offset = curr_offset_;
+  string metas_data;
+  put_numeric<uint32_t>(&metas_data, block_metas_.size());
+  for (const auto &meta : block_metas_) {
+    string meta_str = meta.encode();
+    put_numeric<uint32_t>(&metas_data, meta_str.size());
+    metas_data.append(meta_str);
+  }
+  file_writer_->write(metas_data);
+  
+  string trailer;
+  put_numeric<uint32_t>(&trailer, meta_offset);
+  file_writer_->write(trailer);
+
+  file_size_ = curr_offset_ + metas_data.size() + sizeof(uint32_t);
+  
+  file_writer_->flush();
+  return RC::SUCCESS;
 }
 
 void ObSSTableBuilder::finish_build_block()

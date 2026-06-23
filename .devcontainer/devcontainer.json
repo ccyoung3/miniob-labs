@@ -1,3 +1,28 @@
 {
-  "image": "oceanbase/miniob"
+  "name": "MiniOB Dev Environment",
+  "image": "miniob:latest",
+  "workspaceFolder": "/config/miniob",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/config/miniob,type=bind",
+  "runArgs": [
+    "--init"
+  ],
+  "forwardPorts": [8080],
+  "remoteUser": "root",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "GitHub.copilot",
+        "GitHub.copilot-chat",
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "llvm-vs-code-extensions.vscode-clangd"
+      ],
+      "settings": {
+        "cmake.buildDirectory": "${workspaceFolder}/build_debug",
+        "cmake.sourceDirectory": "${workspaceFolder}",
+        "terminal.integrated.defaultProfile.linux": "zsh"
+      }
+    }
+  },
+  "postCreateCommand": "git submodule update --init --recursive || true"
 }

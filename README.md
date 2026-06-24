@@ -45,6 +45,7 @@ bash build.sh debug --make -j4
 
 ## 📝 个人思考与心得
 在做这个大作业的过程中，我遇到了非常多关于并发边界条件与死锁的难题。对于每一个重要模块，我都单独写了思考总结，详见：
+- [Lab0 并发布隆过滤器无锁之美](./docs/blog/lab0-thoughts.md)（已整理完毕）
 - [Lab1 实验心得与踩坑笔记](./docs/blog/lab1-thoughts.md)（已整理完毕）
 
 > **作者**: ccyoung3

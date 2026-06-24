@@ -75,6 +75,16 @@ struct ConditionSqlNode
   Value          right_value;    ///< right-hand side value if right_is_attr = FALSE
 };
 
+enum OrderByDirection {
+  ORDER_BY_ASC,
+  ORDER_BY_DESC
+};
+
+struct OrderBySqlNode {
+  RelAttrSqlNode attr;
+  OrderByDirection direction;
+};
+
 /**
  * @brief 描述一个select语句
  * @ingroup SQLParser
@@ -92,6 +102,7 @@ struct SelectSqlNode
   vector<string>                 relations;    ///< 查询的表
   vector<ConditionSqlNode>       conditions;   ///< 查询条件，使用AND串联起来多个条件
   vector<unique_ptr<Expression>> group_by;     ///< group by clause
+  vector<OrderBySqlNode>         order_bys;    ///< order by clause
 };
 
 /**
@@ -146,6 +157,12 @@ struct AttrInfoSqlNode
   AttrType type;    ///< Type of attribute
   string   name;    ///< Attribute name
   size_t   length;  ///< Length of attribute
+};
+
+struct RelListSqlNode
+{
+  vector<string> relations;
+  vector<ConditionSqlNode> on_conditions;
 };
 
 /**

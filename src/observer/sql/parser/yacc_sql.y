@@ -117,6 +117,10 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         LE
         GE
         NE
+        ORDER
+        ASC
+        INNER
+        JOIN
 
 /** union 中定义各种数据类型，真实生成的代码也是union类型，所以不能有非POD类型的数据 **/
 %union {
@@ -137,6 +141,10 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
   char *                                     cstring;
   int                                        number;
   float                                      floats;
+  vector<OrderBySqlNode> *                   order_by_list;
+  OrderBySqlNode *                           order_by;
+  OrderByDirection                           order_direction;
+  RelListSqlNode *                           rel_list_node;
 }
 
 %destructor { delete $$; } <condition>
@@ -150,6 +158,7 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
 // %destructor { delete $$; } <rel_attr_list>
 %destructor { delete $$; } <relation_list>
 %destructor { delete $$; } <key_list>
+%destructor { delete $$; } <rel_list_node>
 
 %token <number> NUMBER
 %token <floats> FLOAT
@@ -173,11 +182,15 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
 %type <cstring>             storage_format
 %type <key_list>            primary_key
 %type <key_list>            attr_list
-%type <relation_list>       rel_list
+%type <rel_list_node>       rel_list
 %type <expression>          expression
 %type <expression>          aggregate_expression
 %type <expression_list>     expression_list
 %type <expression_list>     group_by
+%type <order_by_list>       order_by_clause
+%type <order_by_list>       order_by_condition_list
+%type <order_by>            order_by_condition
+%type <order_direction>     opt_asc_desc
 %type <cstring>             fields_terminated_by
 %type <cstring>             enclosed_by
 %type <sql_node>            calc_stmt
@@ -483,7 +496,7 @@ update_stmt:      /*  update 语句的语法解析树*/
     }
     ;
 select_stmt:        /*  select 语句的语法解析树*/
-    SELECT expression_list FROM rel_list where group_by
+    SELECT expression_list FROM rel_list where group_by order_by_clause
     {
       $$ = new ParsedSqlNode(SCF_SELECT);
       if ($2 != nullptr) {
@@ -492,7 +505,10 @@ select_stmt:        /*  select 语句的语法解析树*/
       }
 
       if ($4 != nullptr) {
-        $$->selection.relations.swap(*$4);
+        $$->selection.relations.swap($4->relations);
+        for (auto &cond : $4->on_conditions) {
+          $$->selection.conditions.push_back(cond);
+        }
         delete $4;
       }
 
@@ -505,6 +521,62 @@ select_stmt:        /*  select 语句的语法解析树*/
         $$->selection.group_by.swap(*$6);
         delete $6;
       }
+
+      if ($7 != nullptr) {
+        $$->selection.order_bys.swap(*$7);
+        delete $7;
+      }
+    }
+    ;
+
+order_by_clause:
+    /* empty */
+    {
+      $$ = nullptr;
+    }
+    | ORDER BY order_by_condition_list
+    {
+      $$ = $3;
+    }
+    ;
+
+order_by_condition_list:
+    order_by_condition
+    {
+      $$ = new vector<OrderBySqlNode>();
+      $$->push_back(*$1);
+      delete $1;
+    }
+    | order_by_condition COMMA order_by_condition_list
+    {
+      $$ = $3;
+      $$->insert($$->begin(), *$1);
+      delete $1;
+    }
+    ;
+
+order_by_condition:
+    rel_attr opt_asc_desc
+    {
+      $$ = new OrderBySqlNode();
+      $$->attr = *$1;
+      $$->direction = $2;
+      delete $1;
+    }
+    ;
+
+opt_asc_desc:
+    /* empty */
+    {
+      $$ = ORDER_BY_ASC;
+    }
+    | ASC
+    {
+      $$ = ORDER_BY_ASC;
+    }
+    | DESC
+    {
+      $$ = ORDER_BY_DESC;
     }
     ;
 calc_stmt:
@@ -596,17 +668,27 @@ relation:
     ;
 rel_list:
     relation {
-      $$ = new vector<string>();
-      $$->push_back($1);
+      $$ = new RelListSqlNode();
+      $$->relations.push_back($1);
     }
     | relation COMMA rel_list {
       if ($3 != nullptr) {
         $$ = $3;
       } else {
-        $$ = new vector<string>;
+        $$ = new RelListSqlNode();
       }
 
-      $$->insert($$->begin(), $1);
+      $$->relations.insert($$->relations.begin(), $1);
+    }
+    | rel_list INNER JOIN relation ON condition {
+      if ($1 != nullptr) {
+        $$ = $1;
+      } else {
+        $$ = new RelListSqlNode();
+      }
+      $$->relations.push_back($4);
+      $$->on_conditions.push_back(*$6);
+      delete $6;
     }
     ;
 

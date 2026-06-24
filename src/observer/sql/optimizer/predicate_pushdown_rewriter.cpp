@@ -17,6 +17,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/expr/expression.h"
 #include "sql/operator/logical_operator.h"
 #include "sql/operator/table_get_logical_operator.h"
+#include "sql/operator/join_logical_operator.h"
 
 RC PredicatePushdownRewriter::rewrite(unique_ptr<LogicalOperator> &oper, bool &change_made)
 {
@@ -30,11 +31,9 @@ RC PredicatePushdownRewriter::rewrite(unique_ptr<LogicalOperator> &oper, bool &c
   }
 
   unique_ptr<LogicalOperator> &child_oper = oper->children().front();
-  if (child_oper->type() != LogicalOperatorType::TABLE_GET) {
+  if (child_oper->type() != LogicalOperatorType::TABLE_GET && child_oper->type() != LogicalOperatorType::JOIN) {
     return rc;
   }
-
-  auto table_get_oper = static_cast<TableGetLogicalOperator *>(child_oper.get());
 
   vector<unique_ptr<Expression>> &predicate_oper_exprs = oper->expressions();
   if (predicate_oper_exprs.size() != 1) {
@@ -42,11 +41,50 @@ RC PredicatePushdownRewriter::rewrite(unique_ptr<LogicalOperator> &oper, bool &c
   }
 
   unique_ptr<Expression>             &predicate_expr = predicate_oper_exprs.front();
-  vector<unique_ptr<Expression>> pushdown_exprs;
-  rc = get_exprs_can_pushdown(predicate_expr, pushdown_exprs);
-  if (rc != RC::SUCCESS) {
-    LOG_WARN("failed to get exprs can pushdown. rc=%s", strrc(rc));
-    return rc;
+
+  if (child_oper->type() == LogicalOperatorType::TABLE_GET) {
+    auto table_get_oper = static_cast<TableGetLogicalOperator *>(child_oper.get());
+    vector<unique_ptr<Expression>> pushdown_exprs;
+    rc = get_exprs_can_pushdown(predicate_expr, pushdown_exprs);
+    if (rc != RC::SUCCESS) {
+      LOG_WARN("failed to get exprs can pushdown. rc=%s", strrc(rc));
+      return rc;
+    }
+    if (!pushdown_exprs.empty()) {
+      change_made = true;
+      table_get_oper->set_predicates(std::move(pushdown_exprs));
+    }
+  } else if (child_oper->type() == LogicalOperatorType::JOIN) {
+    auto join_oper = static_cast<JoinLogicalOperator *>(child_oper.get());
+    
+    if (predicate_expr->type() == ExprType::COMPARISON) {
+      auto comp_expr = static_cast<ComparisonExpr *>(predicate_expr.get());
+      if (comp_expr->comp() == CompOp::EQUAL_TO) {
+        change_made = true;
+        join_oper->add_join_predicate(std::move(predicate_expr));
+        Value value((bool)true);
+        predicate_expr = unique_ptr<Expression>(new ValueExpr(value));
+      }
+    } else if (predicate_expr->type() == ExprType::CONJUNCTION) {
+      ConjunctionExpr *conjunction_expr = static_cast<ConjunctionExpr *>(predicate_expr.get());
+      if (conjunction_expr->conjunction_type() == ConjunctionExpr::Type::AND) {
+        vector<unique_ptr<Expression>> &children = conjunction_expr->children();
+        for (auto it = children.begin(); it != children.end();) {
+          if ((*it)->type() == ExprType::COMPARISON) {
+            auto comp_expr = static_cast<ComparisonExpr *>((*it).get());
+            if (comp_expr->comp() == CompOp::EQUAL_TO) {
+              join_oper->add_join_predicate(std::move(*it));
+              it = children.erase(it);
+              change_made = true;
+            } else {
+              ++it;
+            }
+          } else {
+            ++it;
+          }
+        }
+      }
+    }
   }
 
   if (!predicate_expr || is_empty_predicate(predicate_expr)) {
@@ -56,11 +94,6 @@ RC PredicatePushdownRewriter::rewrite(unique_ptr<LogicalOperator> &oper, bool &c
 
     Value value((bool)true);
     predicate_expr = unique_ptr<Expression>(new ValueExpr(value));
-  }
-
-  if (!pushdown_exprs.empty()) {
-    change_made = true;
-    table_get_oper->set_predicates(std::move(pushdown_exprs));
   }
   return rc;
 }

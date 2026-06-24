@@ -30,6 +30,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/operator/insert_physical_operator.h"
 #include "sql/operator/join_logical_operator.h"
 #include "sql/operator/nested_loop_join_physical_operator.h"
+#include "sql/operator/hash_join_physical_operator.h"
 #include "sql/operator/predicate_logical_operator.h"
 #include "sql/operator/predicate_physical_operator.h"
 #include "sql/operator/project_logical_operator.h"
@@ -42,6 +43,8 @@ See the Mulan PSL v2 for more details. */
 #include "sql/operator/hash_group_by_physical_operator.h"
 #include "sql/operator/scalar_group_by_physical_operator.h"
 #include "sql/operator/table_scan_vec_physical_operator.h"
+#include "sql/operator/sort_logical_operator.h"
+#include "sql/operator/sort_physical_operator.h"
 #include "sql/optimizer/physical_plan_generator.h"
 
 using namespace std;
@@ -85,6 +88,10 @@ RC PhysicalPlanGenerator::create(LogicalOperator &logical_operator, unique_ptr<P
 
     case LogicalOperatorType::GROUP_BY: {
       return create_plan(static_cast<GroupByLogicalOperator &>(logical_operator), oper, session);
+    } break;
+
+    case LogicalOperatorType::SORT: {
+      return create_plan(static_cast<SortLogicalOperator &>(logical_operator), oper, session);
     } break;
 
     default: {
@@ -308,7 +315,22 @@ RC PhysicalPlanGenerator::create_plan(JoinLogicalOperator &join_oper, unique_ptr
     return RC::INTERNAL;
   }
   if (session->hash_join_on() && can_use_hash_join(join_oper)) {
-    // your code here
+    unique_ptr<HashJoinPhysicalOperator> hash_join_oper(new HashJoinPhysicalOperator());
+    // Give all pushed down predicates to hash join operator
+    for (auto &pred : join_oper.get_join_predicates()) {
+      hash_join_oper->add_join_predicate(std::move(pred));
+    }
+
+    for (auto &child_oper : child_opers) {
+      unique_ptr<PhysicalOperator> child_physical_oper;
+      rc = create(*child_oper, child_physical_oper, session);
+      if (rc != RC::SUCCESS) {
+        LOG_WARN("failed to create physical child oper. rc=%s", strrc(rc));
+        return rc;
+      }
+      hash_join_oper->add_child(std::move(child_physical_oper));
+    }
+    oper = std::move(hash_join_oper);
   } else {
     unique_ptr<PhysicalOperator> join_physical_oper(new NestedLoopJoinPhysicalOperator());
     for (auto &child_oper : child_opers) {
@@ -329,7 +351,20 @@ RC PhysicalPlanGenerator::create_plan(JoinLogicalOperator &join_oper, unique_ptr
 
 bool PhysicalPlanGenerator::can_use_hash_join(JoinLogicalOperator &join_oper)
 {
-  // your code here
+  const vector<unique_ptr<Expression>> &predicates = join_oper.get_join_predicates();
+  if (predicates.empty()) {
+    return false;
+  }
+
+  for (const auto &pred : predicates) {
+    if (pred->type() == ExprType::COMPARISON) {
+      auto comp_expr = static_cast<ComparisonExpr *>(pred.get());
+      if (comp_expr->comp() == CompOp::EQUAL_TO) {
+        return true;
+      }
+    }
+  }
+
   return false;
 }
 
@@ -368,6 +403,26 @@ RC PhysicalPlanGenerator::create_plan(GroupByLogicalOperator &logical_oper, uniq
   group_by_oper->add_child(std::move(child_physical_oper));
 
   oper = std::move(group_by_oper);
+  return rc;
+}
+
+RC PhysicalPlanGenerator::create_plan(
+    SortLogicalOperator &logical_oper, unique_ptr<PhysicalOperator> &oper, Session *session)
+{
+  RC rc = RC::SUCCESS;
+
+  unique_ptr<PhysicalOperator> child_oper;
+  rc = create(*logical_oper.children()[0], child_oper, session);
+  if (rc != RC::SUCCESS) {
+    LOG_WARN("failed to create child physical plan for sort operator. rc=%s", strrc(rc));
+    return rc;
+  }
+
+  vector<OrderBySqlNode> order_bys = logical_oper.order_bys();
+  unique_ptr<SortPhysicalOperator> sort_oper = make_unique<SortPhysicalOperator>(std::move(order_bys));
+  sort_oper->add_child(std::move(child_oper));
+  oper = std::move(sort_oper);
+
   return rc;
 }
 

@@ -25,8 +25,12 @@
 - **物理算子开发**: 实现了 `SortPhysicalOperator` 和 `HashJoinPhysicalOperator`。其中 Hash Join 使用哈希桶在内存中缓存左表数据，将原本 $O(N^2)$ 的嵌套循环连接效率提升至 $O(N)$。
 - **查询优化器规则**: 实现了谓词下推（Predicate Pushdown），自动将 `ON` 子句中的等值条件分配给对应的 Join 算子；在 `PhysicalPlanGenerator` 中集成基于代价/规则的算子选择（智能切换 `HashJoin` 替代 `NestedLoopJoin`）。
 
-### Lab 3 ~ Lab 4 (规划中)
-- **事务引擎 (MVCC/WAL)**: 控制 ACID 与故障恢复。
+### Lab 3: 事务引擎 - MVCC 与 WAL 持久化 (已完成)
+扩展底层架构以支持并发事务控制与数据容灾机制：
+- **快照隔离 (Snapshot Isolation) 的 MVCC 实现**: 为每个写入分配自增 `Sequence Number` 作为逻辑时间戳，通过 `ObLsmTransaction` 管理事务内部私有的 WriteBatch (即 `inner_store_`)。实现了基于 `TrxIterator` 的合并读逻辑，使得事务可以“读取未提交”的自身数据并与全局快照隔离。
+- **WAL (Write-Ahead Logging) 持久化与宕机恢复**: 实现顺序写追加日志以保证 MemTable 的 Durability。支持服务器冷启动时，解析反序列化 WAL 记录并在内存中回放以实现完全无损的数据恢复；在恢复阶段能自动扫描已存在的底层存储计算最大自增键，避免插入冲突。
+
+### Lab 4 (规划中)
 - **性能基准测试**: 构建吞吐与延迟压测体系。
 
 ## ⚙️ 如何编译与运行
@@ -53,6 +57,7 @@ bash build.sh debug --make -j4
 - [Lab0 并发布隆过滤器无锁之美](./docs/blog/lab0-thoughts.md)（已整理完毕）
 - [Lab1 实验心得与踩坑笔记](./docs/blog/lab1-thoughts.md)（已整理完毕）
 - [Lab2 查询引擎：优化器与 Hash Join 实现的心得与踩坑](./docs/blog/lab2-thoughts.md)（已整理完毕）
+- [Lab3 事务引擎与 WAL 持久化：并发隔离与状态重建的哲学](./docs/blog/lab3-thoughts.md)（已整理完毕）
 
 > **作者**: ccyoung3
 > **身份**: 研一在读

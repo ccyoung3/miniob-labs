@@ -119,5 +119,33 @@ private:
  * @brief An iterator for traversing the transaction's in-memory store
  */
 class TrxInnerMapIterator : public ObLsmIterator
-{};
+{
+public:
+  TrxInnerMapIterator(const std::map<std::string, std::string> &store) : store_(store), it_(store.begin()) {}
+  ~TrxInnerMapIterator() override = default;
+
+  bool valid() const override { return it_ != store_.end(); }
+  void seek_to_first() override { it_ = store_.begin(); }
+  void seek_to_last() override {
+    it_ = store_.end();
+    if (it_ != store_.begin()) {
+      --it_;
+    }
+  }
+  void seek(const string_view &key) override {
+    it_ = store_.lower_bound(std::string(key));
+  }
+  void next() override {
+    if (it_ != store_.end()) {
+      ++it_;
+    }
+  }
+
+  string_view key() const override { return it_->first; }
+  string_view value() const override { return it_->second; }
+
+private:
+  const std::map<std::string, std::string> &store_;
+  std::map<std::string, std::string>::const_iterator it_;
+};
 }  // namespace oceanbase

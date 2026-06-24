@@ -77,7 +77,15 @@ RC ObLsmImpl::recover()
   }
 
   // Recover memtable from WAL file.
+  if (new_memtable_record) {
+    memtable_id_ = new_memtable_record->memtable_id;
+  }
   wal_ = std::make_unique<WAL>();
+  rc = recover_from_wal();
+  if (rc != RC::SUCCESS) {
+    LOG_ERROR("Failed to recover from WAL, rc=%s", strrc(rc));
+    return rc;
+  }
 
   // After recover from the old manifest file, write the snapshot into a new manifest file.
   if (!compaction_records.empty()) {
@@ -148,7 +156,47 @@ RC ObLsmImpl::put(const string_view &key, const string_view &value)
   return rc;
 }
 
-RC ObLsmImpl::batch_put(const vector<pair<string, string>> &kvs) { return RC::UNIMPLEMENTED; }
+RC ObLsmImpl::batch_put(const vector<pair<string, string>> &kvs) {
+  RC rc = RC::SUCCESS;
+  unique_lock<mutex> lock(mu_);
+  
+  std::vector<uint64_t> seqs;
+  seqs.reserve(kvs.size());
+  
+  for (const auto &kv : kvs) {
+    uint64_t seq = seq_.fetch_add(1);
+    seqs.push_back(seq);
+    rc = wal_->put(seq, kv.first, kv.second);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+  }
+
+  if (options_.force_sync_new_log) {
+    rc = wal_->sync();
+    if (rc != RC::SUCCESS) {
+      LOG_ERROR("Failed to sync wal logs, rc=%s", strrc(rc));
+      return rc;
+    }
+  }
+
+  for (size_t i = 0; i < kvs.size(); ++i) {
+    mem_table_->put(seqs[i], kvs[i].first, kvs[i].second);
+    size_t mem_size = mem_table_->appro_memory_usage();
+    if (mem_size > options_.memtable_size) {
+      if (imem_tables_.size() >= 1) {
+        cv_.wait(lock);
+      }
+      if (mem_table_->appro_memory_usage() > options_.memtable_size) {
+        manifest_.latest_seq = seqs[i];
+        try_freeze_memtable();
+      } else {
+        cv_.notify_one();
+      }
+    }
+  }
+  return rc;
+}
 
 RC ObLsmImpl::remove(const string_view &key) { return RC::UNIMPLEMENTED; }
 
@@ -527,6 +575,26 @@ RC ObLsmImpl::write_manifest_snapshot()
     return rc;
   }
   return RC::SUCCESS;
+}
+
+RC ObLsmImpl::recover_from_wal()
+{
+  std::vector<WalRecord> wal_records;
+  uint64_t wal_memtable_id = memtable_id_.load();
+  RC rc = wal_->recover(get_wal_path(wal_memtable_id), wal_records);
+  if (rc != RC::SUCCESS) {
+    // If WAL file doesn't exist or other read error, we just open for write.
+    // However, if the file doesn't exist, recover returns some error.
+  } else {
+    for (const auto& rec : wal_records) {
+      mem_table_->put(rec.seq, rec.key, rec.val);
+      uint64_t current_seq = seq_.load();
+      while (current_seq <= rec.seq && !seq_.compare_exchange_weak(current_seq, rec.seq + 1)) {
+      }
+    }
+  }
+  
+  return wal_->open(get_wal_path(wal_memtable_id));
 }
 
 }  // namespace oceanbase

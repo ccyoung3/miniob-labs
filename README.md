@@ -19,8 +19,13 @@
 - **SSTable 与 LRU Cache**: 实现了数据文件块的解析及带驱逐机制的缓存控制，大幅降低磁盘 I/O 带来的延迟。
 - **Leveled Compaction**: 控制读写放大，设计并实现将 L0 与更深层数据有效合并的挑选策略。
 
-### Lab 2 ~ Lab 4 (规划中)
-- **查询引擎**: 扩展词法与语法分析，建立优化器与物理执行计划。
+### Lab 2: 查询引擎 - 语法解析与物理算子执行 (已完成)
+扩展查询引擎，实现高阶查询算子。
+- **语法树与 AST 扩展**: 扩展了 `lex`/`yacc` 规则，支持了 `ORDER BY` 与 `INNER JOIN ... ON` 语法。
+- **物理算子开发**: 实现了 `SortPhysicalOperator` 和 `HashJoinPhysicalOperator`。其中 Hash Join 使用哈希桶在内存中缓存左表数据，将原本 $O(N^2)$ 的嵌套循环连接效率提升至 $O(N)$。
+- **查询优化器规则**: 实现了谓词下推（Predicate Pushdown），自动将 `ON` 子句中的等值条件分配给对应的 Join 算子；在 `PhysicalPlanGenerator` 中集成基于代价/规则的算子选择（智能切换 `HashJoin` 替代 `NestedLoopJoin`）。
+
+### Lab 3 ~ Lab 4 (规划中)
 - **事务引擎 (MVCC/WAL)**: 控制 ACID 与故障恢复。
 - **性能基准测试**: 构建吞吐与延迟压测体系。
 
@@ -47,6 +52,7 @@ bash build.sh debug --make -j4
 在做这个大作业的过程中，我遇到了非常多关于并发边界条件与死锁的难题。对于每一个重要模块，我都单独写了思考总结，详见：
 - [Lab0 并发布隆过滤器无锁之美](./docs/blog/lab0-thoughts.md)（已整理完毕）
 - [Lab1 实验心得与踩坑笔记](./docs/blog/lab1-thoughts.md)（已整理完毕）
+- [Lab2 查询引擎：优化器与 Hash Join 实现的心得与踩坑](./docs/blog/lab2-thoughts.md)（已整理完毕）
 
 > **作者**: ccyoung3
 > **身份**: 研一在读

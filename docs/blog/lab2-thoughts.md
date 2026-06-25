@@ -33,3 +33,19 @@
 实验中应用了部分算法思想以提高执行效率：
 - 使用哈希表将连接复杂度由 $O(N^2)$ 降低至 $O(M+N)$。
 - 在 `PhysicalPlanGenerator` 中，通过检测 `ExprType::COMPARISON` 是否具有 `CompOp::EQUAL_TO` 的形式以决策是否采用 `HashJoin`。这属于基于规则的优化 (RBO) 的基础实践。
+
+## 3. 实验效果演示
+
+通过查询优化器重写并在物理层通过 `HashJoinPhysicalOperator` 运行的 `INNER JOIN` 展现了预期的多表联动效果：
+```sql
+miniob > create table scores (id int, score float);
+SUCCESS
+miniob > insert into scores values (1, 99.5);
+SUCCESS
+miniob > insert into scores values (2, 85.0);
+SUCCESS
+miniob > select users.name, scores.score from users inner join scores on users.id = scores.id;
+name | score
+Alice | 99.5
+Bob | 85
+```

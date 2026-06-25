@@ -31,3 +31,26 @@
 
 ## 总结
 本次实验完整串联了事务的 ACID 特性保障手段，从 WAL 重播到 MemTable，从多版本快照到合并读取，展示了数据库状态在一致性、持久化与性能之间进行权衡的实现过程。
+
+## 4. 实验效果演示
+
+事务引擎最直接的体现是隔离级别的保障与数据的回滚：
+```sql
+miniob > begin;
+SUCCESS
+miniob > insert into users values (3, 'Charlie');
+SUCCESS
+-- 事务内部可以合并读取到未提交的 Charlie：
+miniob > select * from users;
+id | name
+1 | Alice
+2 | Bob
+3 | Charlie
+miniob > rollback;
+SUCCESS
+-- Rollback 回滚后，数据恢复隔离状态：
+miniob > select * from users;
+id | name
+1 | Alice
+2 | Bob
+```

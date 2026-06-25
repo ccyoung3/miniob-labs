@@ -24,3 +24,19 @@
 
 ## 总结
 至此，从存储结构（LSM-Tree）、执行引擎（Sort / Hash Join）、事务机制（WAL / MVCC）到基本表达式扩展（Lab 4），MiniOB 的四个主要 Lab 均已实现。实验过程加深了对 C++ 编程及并发控制、资源平衡、执行计划优化等数据库底层概念的理解。
+
+## 5. 实验效果演示
+
+成功完成了对高阶 SQL 语法树中的聚合函数进行计算拦截与正确取值，同时对接了带有 LSM Tombstone 的数据更新逻辑：
+```sql
+miniob > select count(id), max(score), min(score) from scores;
+count(id) | max(score) | min(score)
+2 | 99.5 | 85
+miniob > update scores set score = 100.0 where id = 1;
+SUCCESS
+-- 底层触发 Tombstone 与更新覆盖：
+miniob > select * from scores;
+id | score
+1 | 100
+2 | 85
+```

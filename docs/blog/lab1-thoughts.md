@@ -54,3 +54,19 @@ Compaction 任务由全局全量归并改为分层（Leveled）压缩策略。
 
 ### 3.3 联调测试
 在联调过程中，未实现的 WAL 模块默认报错中断流程。在不影响当前逻辑验证的前提下，将相关的 WAL 调用作 Mock 处理返回 `RC::SUCCESS`，从而使注意力集中于 LSM 的归并逻辑，最终通过了各并发和归并单测。
+
+## 4. 实验效果演示
+
+在成功实现底层存储能力后，客户端基础建表与插存行为表现正常：
+```sql
+miniob > create table users (id int, name char(10));
+SUCCESS
+miniob > insert into users values (1, 'Alice');
+SUCCESS
+miniob > insert into users values (2, 'Bob');
+SUCCESS
+miniob > select * from users;
+id | name
+1 | Alice
+2 | Bob
+```

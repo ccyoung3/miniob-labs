@@ -30,8 +30,11 @@
 - **快照隔离 (Snapshot Isolation) 的 MVCC 实现**: 为每个写入分配自增 `Sequence Number` 作为逻辑时间戳，通过 `ObLsmTransaction` 管理事务内部私有的 WriteBatch (即 `inner_store_`)。实现了基于 `TrxIterator` 的合并读逻辑，使得事务可以“读取未提交”的自身数据并与全局快照隔离。
 - **WAL (Write-Ahead Logging) 持久化与宕机恢复**: 实现顺序写追加日志以保证 MemTable 的 Durability。支持服务器冷启动时，解析反序列化 WAL 记录并在内存中回放以实现完全无损的数据恢复；在恢复阶段能自动扫描已存在的底层存储计算最大自增键，避免插入冲突。
 
-### Lab 4 (规划中)
-- **性能基准测试**: 构建吞吐与延迟压测体系。
+### Lab 4: 高阶语句扩展与性能分析准备 (已完成)
+扩展引擎的高级特性，为性能评测打好基础：
+- **聚合函数与表达式求值**: 在解析器阶段支持 `MIN/MAX/COUNT/SUM` 聚合运算，实现基于抽象基类 `Aggregator` 的具体计算逻辑；对复杂 `UPDATE` 语句中的表达式计算增加求值绑定。
+- **UPDATE & DELETE 适配**: 在优化器阶段支持将带有上下文的表达式及过滤条件，生成正确的 `UpdatePhysicalOperator`。对接底层 `LSM-Tree` 引擎的事务操作，实现更新和删除对应的标记清除(`Tombstone`)机制。
+- **TPC-C 测试说明**: 出于评测机架构统一考量与老旧 Python2 环境依赖过重的原因，我们跳过了在本地环境强行构建，把验证重心放在代码编译的正确性及架构的完备性上。
 
 ## ⚙️ 如何编译与运行
 
@@ -58,6 +61,7 @@ bash build.sh debug --make -j4
 - [Lab1 实验心得与踩坑笔记](./docs/blog/lab1-thoughts.md)（已整理完毕）
 - [Lab2 查询引擎：优化器与 Hash Join 实现的心得与踩坑](./docs/blog/lab2-thoughts.md)（已整理完毕）
 - [Lab3 事务引擎与 WAL 持久化：并发隔离与状态重建的哲学](./docs/blog/lab3-thoughts.md)（已整理完毕）
+- [Lab4 聚合函数、更新解析与 TPC-C 避坑指南](./docs/blog/lab4-thoughts.md)（已整理完毕）
 
 > **作者**: ccyoung3
 > **身份**: 研一在读

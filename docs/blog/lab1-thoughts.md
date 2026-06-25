@@ -1,74 +1,56 @@
-# Lab1 LSM-Tree 存储引擎踩坑笔记与实验思考
+# Lab 1 学习记录
 
-> 声明：本笔记为《当代数据管理》大作业的个人学习记录。在完成 MiniOB 的存储引擎部分时，遇到了许多系统级编程和并发控制上的挑战，特此整理。
+> 声明：本笔记为《当代数据管理》大作业的个人学习记录。在完成 MiniOB 的存储引擎部分时，总结了系统级编程和并发控制上的实现细节。
 
-## 0. 写在前面的话
-在刚开始接触这个 Lab 时，看到需要手搓并发无锁 SkipList 和 LRU 缓存，心里还是挺发虚的。毕竟平时在业务代码里，直接一个 `std::mutex` 加上标准库就完事了。但为了深入理解底层存储引擎（比如 OceanBase, RocksDB 是如何扛住高并发的），我决定严格按照要求进行无锁（Lock-Free）和细粒度锁的改造。
+## 0. 背景说明
+在本 Lab 中，目标是实现并发无锁 SkipList 和 LRU 缓存，以深入理解底层存储引擎（如 OceanBase, RocksDB）在高并发场景下的处理机制。为此，实现中采用了无锁（Lock-Free）和细粒度锁的改造。
 
-## 1. 基础数据结构 - 并发 SkipList 实现心得
-MemTable 这一层由于高频读写，性能直接影响整个 LSM-Tree 引擎的吞吐。官方框架里的 `ObSkipList` 只是搭了个骨架，我需要补充底层的 `find_greater_or_equal` 以及支持并发无锁的 `insert_concurrently`。
+## 1. 基础数据结构 - 并发 SkipList 实现
 
-起初我在思考，多线程如果同时插同样的层高，是不是直接锁整个 SkipList 就行了？但是锁的开销太大了，违背了高性能的设计初衷。后来查阅了 LevelDB 的实现，并结合 `std::atomic` 的 `compare_exchange_weak` 和 `compare_exchange_strong`（也就是 CAS）实现了真正的 Lock-Free 插入：
-- **随机高度的线程安全**: 原本代码里 `random_height()` 共用了一个全局的 `rnd` 随机生成器，在并发时会导致数据竞争。我巧妙地利用了 `thread_local common::RandomGenerator tls_rnd;`，避开了锁的开销，这对于无锁设计来说是非常关键的细节。
-- **多级 CAS 重试**: 最麻烦的在于节点插入时，因为前后节点的指针随时会被其他线程修改。我的实现是：先用一个 `while(true)` 获取目标节点在所有层级的 `prev` 和 `succ`，接着最底部的第 0 层做强 CAS `prev[0]->cas_next(0, succ[0], x)`，如果失败说明有其它线程抢先插入了相邻节点，直接放弃当前寻找的结果，全部从头 retry；只有第 0 层插入成功（这证明该节点已经在全局链表中立足），才逐步向更高层利用 CAS 链接。
+MemTable 层的读写性能直接影响 LSM-Tree 引擎吞吐。官方框架中的 `ObSkipList` 提供了基础结构，需要补充 `find_greater_or_equal` 及支持并发无锁的 `insert_concurrently`。
 
-在这个过程中，通过测试发现单测 `ob_skiplist_test` 竟然默认都是 `DISABLED_`，把它开了跑通后，看着绿色的 `[  PASSED  ]`，成就感直接拉满！
+为了降低锁竞争带来的开销，参考了 LevelDB 的实现，结合 `std::atomic` 的 `compare_exchange_weak` 和 `compare_exchange_strong` (CAS) 实现了无锁插入：
+- **随机高度的线程安全**: 原逻辑中 `random_height()` 共享全局生成器导致并发数据竞争。通过引入 `thread_local common::RandomGenerator tls_rnd;`，规避了锁的开销，这对无锁设计起到了关键作用。
+- **多级 CAS 重试**: 节点插入时前后指针易被并发修改。实现逻辑为：通过 `while(true)` 获取目标节点各层级的 `prev` 和 `succ`，首先在底部的第 0 层执行强 CAS `prev[0]->cas_next(0, succ[0], x)`。若失败说明相邻节点发生变更，则重新寻找；仅当第 0 层插入成功后，再向更高层利用 CAS 建立链接。
 
-其实这层实现最有趣的地方在于 C++ 原子操作的细粒度控制（`memory_order_relaxed` 应对多层级随机高度的生成，以及 `memory_order_release`、`memory_order_acquire` 建立数据依赖）。纸上得来终觉浅，这玩意写起来比读论文要痛苦，但也过瘾。
+此部分有效锻炼了对 C++ 原子操作的细粒度控制，包括 `memory_order_relaxed`、`memory_order_release` 与 `memory_order_acquire` 的使用。
 
----
+## 2. 阶段二：Block Cache 与 SSTable 构建
 
-## 2. 阶段二：Block Cache 与 SSTable 的构建
+SkipList 为内存结构，而数据落盘面临持久化格式设计与磁盘 I/O 效率的问题。本阶段设计了基于 LRU 的 Block Cache，并完成了 SSTable 的读写链路。
 
-SkipList 虽然写起来复杂，但它毕竟是内存结构。一旦数据要落盘，我们面临的就是另一种维度的挑战：**持久化格式（Format）的设计与磁盘 I/O 效率**。这部分，我花了几个晚上的时间设计和实现基于 LRU 的 Block Cache，并把 SSTable 的读写链路跑通了。
+### 2.1 LRU 缓存的实现
+Block Cache 的核心要求是线程安全与高命中率。使用 `std::list` 与 `std::unordered_map` 实现了双向链表结合哈希表的 LRU。
+需要注意的边界条件是：当容量 `capacity == 0` 时，需添加防御性校验，以防止不可预知的行为。此外，`std::list::splice` 在处理 LRU 节点移动时有效避免了内存分配与析构，降低了操作成本。
 
-### 2.1 LRU 缓存：锁的艺术
-
-对于 Block Cache，核心要求是线程安全且命中率高。我用 `std::list` 加上 `std::unordered_map` 实现了一个双向链表+哈希表的经典 LRU。
-遇到的一个小坑是：当容量 `capacity == 0` 时，如果直接进入 `put()` 的处理逻辑，会导致野指针或者不可预知的行为。虽然是很基础的边界条件，但在调试时让我愣了半天，加上边界防御后终于绿了。
-另外在 C++ 里，`std::list::splice` 真的是处理 LRU 节点移动的神器，避免了频繁的内存分配和析构，极大地降低了时间常数。
-
-### 2.2 SSTable 解析：从尾到头的读取策略
-
-SSTable 的格式设计（Format Design）非常像打包文件。在 MiniOB 的设定里，SSTable 尾部放了一个定长的 trailer（存储 meta 信息的起始偏移量），通过这个偏移量能找到所有 Block Meta。
-
-实现 `ObSSTable::init()` 时，我的思路是：
-1. 用 `ObFileReader` 打开文件。
-2. 读文件最后 4 个字节，拿到 Meta 数组的偏移。
-3. 从那个偏移读出所有 `BlockMeta`，缓存在内存里，形成一个基于块的索引（Block Index）。
+### 2.2 SSTable 解析策略
+SSTable 尾部存储了定长的 trailer（记录 meta 信息的起始偏移量），由此可定位所有 Block Meta。
+`ObSSTable::init()` 实现逻辑：
+1. 通过 `ObFileReader` 打开文件。
+2. 读取文件末尾 4 字节，获取 Meta 数组偏移。
+3. 根据偏移量读取所有 `BlockMeta`，在内存中缓存并形成 Block Index。
 
 ### 2.3 数据与缓存的桥梁：read_block_with_cache
-
-在这里，LRU Cache 和 SSTable 真正发生了联动。如果需要读取某个 Block：
-- 先把 `(sst_id, block_idx)` 组装成唯一的缓存 Key。
-- 去 LRU 里面查。如果有，直接返回。
-- 如果没有，再去触发真实的文件 I/O (`read_block`) 并且放入 Cache。
-
-这也是现代存储引擎能够高性能响应查询的命脉。写完这部分逻辑，看着 `ob_lru_cache_test`、`ob_block_test`、`ob_table_test` 这三个大测试模块（还有十几个原本 disabled 的边界测试用例）全部通过的那一瞬间，真的很爽。接下来准备攻克最复杂的 Leveled Compaction 了！
-
----
+LRU Cache 与 SSTable 通过此方法联动。读取 Block 的逻辑为：
+- 组装 `(sst_id, block_idx)` 作为唯一缓存 Key。
+- 查询 LRU，若命中则直接返回。
+- 若未命中，则触发文件 I/O (`read_block`) 并将其加入 Cache。
 
 ## 3. 阶段三：Leveled Compaction 策略与流式构建
 
-整个 LSM-Tree 引擎中最核心、也最体现分布式数据库底层设计的组件莫过于 Compaction。在这个任务中，我需要将简单的全局全量归并改为类似 RocksDB 的分层（Leveled）压缩策略。
+Compaction 任务由全局全量归并改为分层（Leveled）压缩策略。
 
-### 3.1 挑选与合并：LeveledCompactionPicker 的设计
-
-与 Tired Compaction（通常是将同层所有重叠的 SSTable 直接合并放到下一层）不同，Leveled 更加精细化：
-- **Level 0 到 Level 1**: 由于 L0 的文件是由内存直接 Dump 下来的，文件之间会有互相重叠（Overlap）。因此我在实现时，当 L0 的 SSTable 数量超过阈值（如 4 个），必须把**所有** L0 文件与相关的 L1 文件拿来合并。
-- **Level i 到 Level i+1**: 从 L1 开始，由于经过排序，文件之间是互相不重叠的。此时我只需要挑出一个文件（我选择了通过文件大小或轮询的方式），然后在下一层寻找与该文件 Key 范围有交集的重叠文件，组合成合并任务。这大大减少了合并时的读写放大。
+### 3.1 合并任务挑选
+- **Level 0 到 Level 1**: L0 的 SSTable 文件之间可能存在重叠。当 L0 文件数量超过阈值时，需将所有 L0 文件与相关 L1 文件进行合并。
+- **Level i 到 Level i+1**: L1 及以上层级文件有序且互不重叠。此时选择单个文件，并在下一层寻找存在 Key 重叠范围的文件组成合并任务，有效控制了读写放大。
 
 ### 3.2 内存限制下的流式合并 (Streaming Compaction)
+为避免一次性将多个文件合并载入内存导致 OOM，对 `ObSSTableBuilder` API 进行了重构，引入了类似 RocksDB 的流式接口：`start()`, `add()`, `finish()`：
+- `merge_iter` 依次迭代输入 SSTable 数据，进行归并；
+- 调用 `builder->add()` 分块写入内存；
+- 当 `builder->appro_size()` 达到 `options_.table_size` 限制时，调用 `finish()` 刷盘并关闭文件，随后开启新的 `builder->start()`。
 
-我在实现 `ObLsmImpl::do_compaction` 时遇到了一个巨大的设计阻碍：如果把多个文件一次性合并并载入内存（甚至组装成一个巨大的 `ObMemTable`），会瞬间造成 OOM！
+该改造使得 Compaction 具备流式处理能力，内存占用稳定。
 
-为了解决这个问题，我彻底重构了 `ObSSTableBuilder` 的 API。原本它只提供了一个 `build(memtable)` 方法，我把它改造成了类似 RocksDB 的 `start()`, `add(key, value)`, `finish()` 流式接口：
-- `merge_iter` 按序迭代多个输入 SSTable 的数据，通过比较器合并数据；
-- 一条条调用 `builder->add()` 写入内存块；
-- 当 `builder->appro_size()` 达到 `options_.table_size` 限制（如 2MB）时，立刻调用 `finish()` 刷盘，并关闭当前文件，再开启下一个全新的 `builder->start()`。
-
-这一改造让我的 Compaction 过程真正拥有了流式处理能力，内存占用稳定维持在一个 Block 大小左右，完美跑通了 `ConcurrentPutAndGetTest` 并发压力测试！
-
-### 3.3 测试与避坑记录
-
-在最后联调时，`ob_compaction_test.cpp` 和 `ob_lsm_test.cpp` 报出了 `RC::UNIMPLEMENTED` 的错误。经过追踪源码，发现这是因为在尚未实现的 `WAL` 模块里，`wal_->put()` 会默认返回错误并中断 `db->put` 的流程。作为课设的一个巧妙处理，我直接 Mock 掉了 WAL 的报错让其返回 `RC::SUCCESS`，把核心注意力聚焦在了 LSM 的磁盘组织结构和归并逻辑上。当看到 10 个 Disabled 的单测全部解禁并绿油油通过时，我知道整个引擎的骨架已经彻底被我打通了！
+### 3.3 联调测试
+在联调过程中，未实现的 WAL 模块默认报错中断流程。在不影响当前逻辑验证的前提下，将相关的 WAL 调用作 Mock 处理返回 `RC::SUCCESS`，从而使注意力集中于 LSM 的归并逻辑，最终通过了各并发和归并单测。

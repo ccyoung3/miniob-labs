@@ -1,6 +1,6 @@
 # Lab 3 学习记录
 
-> 声明：本笔记为《当代数据管理》大作业的个人学习记录。在 Lab 3 的实验中，基于 MiniOB 的 LSM-Tree 存储引擎，搭建了多版本并发控制（MVCC）模型以及 Write-Ahead Logging (WAL) 持久化系统。
+> 在 Lab 3 的实验中，基于 MiniOB 的 LSM-Tree 存储引擎，搭建了多版本并发控制（MVCC）模型以及 Write-Ahead Logging (WAL) 持久化系统。
 
 ## 1. MVCC 快照隔离与事务合并读
 

@@ -18,6 +18,8 @@ See the Mulan PSL v2 for more details. */
 #include "sql/stmt/stmt.h"
 
 class Table;
+class FilterStmt;
+class Expression;
 
 /**
  * @brief 更新语句
@@ -27,18 +29,23 @@ class UpdateStmt : public Stmt
 {
 public:
   UpdateStmt() = default;
-  UpdateStmt(Table *table, Value *values, int value_amount);
+  UpdateStmt(Table *table, FilterStmt *filter_stmt, const string &attribute_name, unique_ptr<Expression> update_expr);
+  ~UpdateStmt() override;
 
 public:
   static RC create(Db *db, const UpdateSqlNode &update_sql, Stmt *&stmt);
 
 public:
   Table *table() const { return table_; }
-  Value *values() const { return values_; }
-  int    value_amount() const { return value_amount_; }
+  FilterStmt *filter_stmt() const { return filter_stmt_; }
+  const string &attribute_name() const { return attribute_name_; }
+  Expression *update_expr() const { return update_expr_.get(); }
+
+  StmtType type() const override { return StmtType::UPDATE; }
 
 private:
-  Table *table_        = nullptr;
-  Value *values_       = nullptr;
-  int    value_amount_ = 0;
+  Table      *table_       = nullptr;
+  FilterStmt *filter_stmt_ = nullptr;
+  string      attribute_name_;
+  unique_ptr<Expression> update_expr_;
 };

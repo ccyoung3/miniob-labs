@@ -121,6 +121,10 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         ASC
         INNER
         JOIN
+        MIN
+        MAX
+        COUNT
+        SUM
 
 /** union 中定义各种数据类型，真实生成的代码也是union类型，所以不能有非POD类型的数据 **/
 %union {
@@ -483,12 +487,12 @@ delete_stmt:    /*  delete 语句的语法解析树*/
     }
     ;
 update_stmt:      /*  update 语句的语法解析树*/
-    UPDATE ID SET ID EQ value where 
+    UPDATE ID SET ID EQ expression where 
     {
       $$ = new ParsedSqlNode(SCF_UPDATE);
       $$->update.relation_name = $2;
       $$->update.attribute_name = $4;
-      $$->update.value = *$6;
+      $$->update.value_expr.reset($6);
       if ($7 != nullptr) {
         $$->update.conditions.swap(*$7);
         delete $7;
@@ -646,6 +650,18 @@ expression:
 aggregate_expression:
     ID LBRACE expression RBRACE {
       $$ = create_aggregate_expression($1, $3, sql_string, &@$);
+    }
+    | MIN LBRACE expression RBRACE {
+      $$ = create_aggregate_expression("min", $3, sql_string, &@$);
+    }
+    | MAX LBRACE expression RBRACE {
+      $$ = create_aggregate_expression("max", $3, sql_string, &@$);
+    }
+    | COUNT LBRACE expression RBRACE {
+      $$ = create_aggregate_expression("count", $3, sql_string, &@$);
+    }
+    | SUM LBRACE expression RBRACE {
+      $$ = create_aggregate_expression("sum", $3, sql_string, &@$);
     }
     ;
 

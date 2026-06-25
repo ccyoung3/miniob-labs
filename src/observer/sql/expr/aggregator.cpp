@@ -34,3 +34,53 @@ RC SumAggregator::evaluate(Value& result)
   result = value_;
   return RC::SUCCESS;
 }
+
+RC MinAggregator::accumulate(const Value &value)
+{
+  if (value_.attr_type() == AttrType::UNDEFINED) {
+    value_ = value;
+    return RC::SUCCESS;
+  }
+  if (value.compare(value_) < 0) {
+    value_ = value;
+  }
+  return RC::SUCCESS;
+}
+
+RC MinAggregator::evaluate(Value &result)
+{
+  result = value_;
+  return RC::SUCCESS;
+}
+
+RC MaxAggregator::accumulate(const Value &value)
+{
+  if (value_.attr_type() == AttrType::UNDEFINED) {
+    value_ = value;
+    return RC::SUCCESS;
+  }
+  if (value.compare(value_) > 0) {
+    value_ = value;
+  }
+  return RC::SUCCESS;
+}
+
+RC MaxAggregator::evaluate(Value &result)
+{
+  result = value_;
+  return RC::SUCCESS;
+}
+
+CountAggregator::CountAggregator() : count_(0) {}
+
+RC CountAggregator::accumulate(const Value &value)
+{
+  count_++;
+  return RC::SUCCESS;
+}
+
+RC CountAggregator::evaluate(Value &result)
+{
+  result = Value(count_);
+  return RC::SUCCESS;
+}
